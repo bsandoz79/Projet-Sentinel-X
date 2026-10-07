@@ -4,7 +4,7 @@
 #  Tous les capteurs sur le GrovePi+ (plus d'ESP)
 #  Lancer :  python3 sentinel_pi.py      (Ctrl+C pour arrêter)
 # =====================================================
-import time, json, hashlib, struct, math, os
+import time, json, hashlib, struct, math, os, threading
 
 try:
     from smbus2 import SMBus
@@ -40,7 +40,9 @@ ECART_GAZ_ALERTE = 100    # alerte si gaz > référence + 100
 SEUIL_SON        = 600    # 0..1023
 SEUIL_PIR        = 400    # A2 > 400 = mouvement
 
-JOURNAL = "journal_sentinel.jsonl"   # journal chaîné (hash) des événements
+DUREE_ALARME     = 5      # s : l'alarme sonne au moins 5 s, relancée tant que l'alerte dure
+
+JOURNAL = "journal_sentinel.jsonl"  # journal chaîné (hash) des événements
 
 # ---------- MQTT (envoi vers le serveur : API + dashboard) ----------
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
@@ -53,6 +55,7 @@ MQTT_PASS = os.getenv("MQTT_PASS") or None
 # =====================================================
 GP = 0x04
 bus = SMBus(1)
+verrou_i2c = threading.RLock()   # la sirène tourne dans un thread : un seul accès au GrovePi à la fois
 
 def gp_cmd(cmd, pin=0, v1=0, v2=0):
     bus.write_i2c_block_data(GP, 1, [cmd, pin, v1, v2])
@@ -67,7 +70,8 @@ def gp_lire(n=32):
 def essai(f, defaut=None, tentatives=3):
     for _ in range(tentatives):
         try:
-            return f()
+            with verrou_i2c:          # commande + lecture sans être coupé par la sirène
+                return f()
         except OSError:
             time.sleep(0.05)
     return defaut
@@ -182,8 +186,37 @@ def bip(duree=0.15, n=1):
         if AVEC_LED: digital_write(PORT_LED, 0)
         time.sleep(duree)
 
+# ---- Sirène : tourne en fond, sonne tant que l'heure de fin n'est pas passée ----
+_fin_alarme = 0.0
+_verrou_alarme = threading.Lock()
+
 def alarme():
-    bip(0.15, 3)
+    """Appelée à chaque seconde d'alerte : (re)lance la sirène pour DUREE_ALARME s."""
+    global _fin_alarme
+    with _verrou_alarme:
+        _fin_alarme = time.time() + DUREE_ALARME
+
+def couper_alarme():
+    global _fin_alarme
+    with _verrou_alarme:
+        _fin_alarme = 0.0
+
+def _sirene():
+    allume = False
+    while True:
+        with _verrou_alarme:
+            active = time.time() < _fin_alarme
+        if active:
+            allume = not allume                    # bip-bip rapide : 0,25 s on / 0,25 s off
+            if AVEC_HP:  analog_write(PORT_HP, 200 if allume else 0)
+            if AVEC_LED: digital_write(PORT_LED, 1 if allume else 0)
+            time.sleep(0.25)
+        else:
+            if allume:                             # fin de l'alarme : on éteint tout
+                allume = False
+                if AVEC_HP:  analog_write(PORT_HP, 0)
+                if AVEC_LED: digital_write(PORT_LED, 0)
+            time.sleep(0.1)
 
 # =====================================================
 #  Journal chaîné (chaque ligne contient le hash de la précédente)
@@ -243,6 +276,7 @@ if AVEC_LCD: lcd_init()
 
 couleur(0, 80, 255); texte("Sentinel-X", "Demarrage...")
 bip(0.1, 2)
+threading.Thread(target=_sirene, daemon=True).start()
 
 print("Stabilisation des capteurs (10 s), ne bouge pas devant le PIR...")
 for i in range(10, 0, -1):
@@ -314,6 +348,7 @@ try:
 
         if etat == "DHT":         couleur(255, 0, 255);  texte(l1, "Verifier DHT")
         elif etat == "ALERTE":    couleur(255, 0, 0);    texte(l1, "ALERTE " + alertes[0]); alarme()
+        elif time.time() < _fin_alarme: couleur(255, 0, 0); texte(l1, "Fin d'alarme...")   # les 5 s après l'alerte
         elif etat == "VIGILANCE": couleur(255, 120, 0);  texte(l1, "Vigilance")
         else:                     couleur(0, 200, 80);   texte(l1, "Tout est OK")
 
@@ -338,6 +373,7 @@ try:
 
 except KeyboardInterrupt:
     print("\nArret.")
+    couper_alarme(); time.sleep(0.3)
     journaliser("arret", {})
     couleur(0, 0, 0); texte("Sentinel-X", "Arrete")
     if AVEC_HP:  analog_write(PORT_HP, 0)

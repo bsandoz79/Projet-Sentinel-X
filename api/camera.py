@@ -103,7 +103,8 @@ def _boucle_sequence():
 
 
 def declencher():
-    """Appelé à chaque alerte : sauve les 10 s d'avant, enregistre les 10 s d'après (prolongé si nouvelle alerte)."""
+    """Appelé à chaque seconde d'alerte : sauve les 10 s d'avant puis enregistre 1 image / s
+    pendant TOUT l'incident, jusqu'à 10 s après la dernière seconde d'alerte."""
     global _enregistrer_jusqua
     with _verrou_seq:
         nouvelle_sequence = time.time() >= _enregistrer_jusqua

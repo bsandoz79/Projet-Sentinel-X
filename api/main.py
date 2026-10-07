@@ -129,16 +129,21 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload)
-        nouvelle_alerte = False
+        nouvelle_alerte = alerte_en_cours = False
         with verrou:
             if msg.topic == "sentinel/capteurs":
                 db.execute("INSERT OR REPLACE INTO mesures VALUES (?, ?)", (int(data["ts"]), json.dumps(data)))
+                alerte_en_cours = bool(data.get("alertes"))
             elif msg.topic == "sentinel/evenements":
                 cur = db.execute(
                     "INSERT OR IGNORE INTO evenements (ts, type, details, prev, hash) VALUES (?, ?, ?, ?, ?)",
                     (data["ts"], data["type"], json.dumps(data["details"]), data["prev"], data["hash"]))
                 nouvelle_alerte = cur.rowcount == 1 and data["type"] == "alerte"
             db.commit()
+        # Tant qu'une mesure contient une alerte, la séquence caméra continue (1 image / s)
+        # puis s'arrête 10 s après la dernière seconde d'alerte.
+        if alerte_en_cours and camera.disponible():
+            camera.declencher()
         if msg.topic == "sentinel/evenements" and nouvelle_alerte and camera.disponible():
             camera.declencher()                                   # séquence 10 s avant / 10 s après
             threading.Thread(target=photographier, args=(data["hash"],), daemon=True).start()
@@ -205,7 +210,7 @@ def replay(inc_id: int):
         raise HTTPException(404, "Incident inconnu")
     debut = iso_vers_ms(inc["debut"])
     fin = iso_vers_ms(inc["fin"]) if inc["fin"] else int(time.time() * 1000)
-    fin = min(fin, debut + 10 * 60_000)               # 10 min max
+    fin = min(fin, debut + 30 * 60_000)               # 30 min max
     with verrou:
         rows = db.execute("SELECT data FROM mesures WHERE ts BETWEEN ? AND ? ORDER BY ts",
                           (debut - AVANT * 1000, fin + APRES * 1000)).fetchall()
