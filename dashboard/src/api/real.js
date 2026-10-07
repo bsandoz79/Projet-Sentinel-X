@@ -15,5 +15,8 @@ export function real(BASE) {
     getReplay: (id) => get(`/api/incidents/${id}/replay`),
     getEvenements: () => get('/api/evenements'),
     verifierIntegrite: () => get('/api/integrite'),
+    // webcam : image en direct + adresse complète d'une photo d'événement
+    cameraUrl: () => BASE.replace(/\/$/, '') + '/api/camera?t=' + Date.now(),
+    urlComplete: (chemin) => BASE.replace(/\/$/, '') + chemin,
   }
 }
