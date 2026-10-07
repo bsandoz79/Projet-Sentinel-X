@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS evenements (
   ts TEXT NOT NULL, type TEXT NOT NULL, details TEXT NOT NULL,
   prev TEXT NOT NULL, hash TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS images (ts INTEGER PRIMARY KEY, fichier TEXT NOT NULL, sha256 TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS photos (
   evt_hash TEXT PRIMARY KEY, fichier TEXT NOT NULL, sha256 TEXT NOT NULL, ts INTEGER NOT NULL
 );
@@ -73,6 +74,13 @@ def lignes_evenements(avec_photos=False):
             e["photo_sha256"] = photos[r["hash"]]
         evts.append(e)
     return evts
+
+
+def sauver_image(ts_ms: int, chemin: str, sha: str):
+    """Image d'une séquence d'incident (1 / s) : rangée en base avec son empreinte."""
+    with verrou:
+        db.execute("INSERT OR IGNORE INTO images VALUES (?, ?, ?)", (ts_ms, chemin, sha))
+        db.commit()
 
 
 def photographier(evt_hash: str):
@@ -132,6 +140,7 @@ def on_message(client, userdata, msg):
                 nouvelle_alerte = cur.rowcount == 1 and data["type"] == "alerte"
             db.commit()
         if msg.topic == "sentinel/evenements" and nouvelle_alerte and camera.disponible():
+            camera.declencher()                                   # séquence 10 s avant / 10 s après
             threading.Thread(target=photographier, args=(data["hash"],), daemon=True).start()
     except Exception as ex:  # un message mal formé ne doit pas arrêter l'API
         print("Message ignoré :", msg.topic, ex)
@@ -142,7 +151,14 @@ def nettoyage():
         limite = int(time.time() * 1000) - GARDER_JOURS * 86400_000
         with verrou:
             db.execute("DELETE FROM mesures WHERE ts < ?", (limite,))
+            vieilles = db.execute("SELECT fichier FROM images WHERE ts < ?", (limite,)).fetchall()
+            db.execute("DELETE FROM images WHERE ts < ?", (limite,))
             db.commit()
+        for r in vieilles:
+            try:
+                os.remove(r["fichier"])
+            except OSError:
+                pass
         time.sleep(3600)
 
 
@@ -157,7 +173,7 @@ async def lifespan(app):
         client.connect_async(MQTT_HOST, MQTT_PORT)
         client.loop_start()
         threading.Thread(target=nettoyage, daemon=True).start()
-    camera.demarrer()                                  # capture continue de la webcam
+    camera.demarrer(sauver_image)                                  # capture continue de la webcam
     yield
     if client:
         client.loop_stop()
@@ -199,7 +215,13 @@ def replay(inc_id: int):
         m["t"] = round((m["ts"] - debut) / 1000)
         mesures.append(m)
     evts = [e for e in lignes_evenements(avec_photos=True) if e["id"] in inc["evenements"]]
-    return {**{k: v for k, v in inc.items() if k != "evenements"}, "mesures": mesures, "evenements": evts}
+    with verrou:
+        imgs = db.execute("SELECT ts, sha256 FROM images WHERE ts BETWEEN ? AND ? ORDER BY ts",
+                          (debut - AVANT * 1000, fin + APRES * 1000)).fetchall()
+    images = [{"ts": r["ts"], "t": round((r["ts"] - debut) / 1000), "url": f"/api/images/{r['ts']}",
+               "sha256": r["sha256"]} for r in imgs]
+    return {**{k: v for k, v in inc.items() if k != "evenements"}, "mesures": mesures,
+            "evenements": evts, "images": images}
 
 
 @app.get("/api/evenements")
@@ -213,6 +235,15 @@ def photo(evt_hash: str):
         r = db.execute("SELECT fichier FROM photos WHERE evt_hash = ?", (evt_hash,)).fetchone()
     if not r or not os.path.exists(r["fichier"]):
         raise HTTPException(404, "Pas de photo pour cet événement")
+    return FileResponse(r["fichier"], media_type="image/jpeg")
+
+
+@app.get("/api/images/{ts}")
+def image_incident(ts: int):
+    with verrou:
+        r = db.execute("SELECT fichier FROM images WHERE ts = ?", (ts,)).fetchone()
+    if not r or not os.path.exists(r["fichier"]):
+        raise HTTPException(404, "Image introuvable")
     return FileResponse(r["fichier"], media_type="image/jpeg")
 
 

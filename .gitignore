@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 *.db
 capteurs/journal_sentinel.jsonl
+*.log

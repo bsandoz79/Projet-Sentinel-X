@@ -5,6 +5,7 @@ Webcam USB en capture CONTINUE (ffmpeg) :
 - photo d'alerte = copie instantanée de la dernière image
 """
 import asyncio
+from collections import deque
 import hashlib
 import os
 import shutil
@@ -17,7 +18,16 @@ RESOLUTION = os.getenv("CAMERA_RESOLUTION", "1280x720")
 FPS = os.getenv("CAMERA_FPS", "10")
 PHOTOS_DIR = os.getenv("PHOTOS_DIR", "photos")
 LIVE = os.path.join(PHOTOS_DIR, "_live.jpg")
-os.makedirs(PHOTOS_DIR, exist_ok=True)
+IMAGES_DIR = os.path.join(PHOTOS_DIR, "incidents")
+os.makedirs(IMAGES_DIR, exist_ok=True)
+
+# ---- Séquence d'incident : 1 image / s, 10 s AVANT et 10 s APRÈS l'alerte ----
+SECONDES_AVANT = int(os.getenv("CAMERA_AVANT", "10"))
+SECONDES_APRES = int(os.getenv("CAMERA_APRES", "10"))
+_tampon = deque(maxlen=SECONDES_AVANT)   # les 10 dernières secondes, en mémoire
+_enregistrer_jusqua = 0.0
+_verrou_seq = threading.Lock()
+_sauver = None                            # fonction de l'API qui range l'image en base
 
 
 def disponible() -> bool:
@@ -63,8 +73,52 @@ def _boucle():
         time.sleep(2)
 
 
-def demarrer():
+def _ecrire(ts_ms: int, data: bytes):
+    chemin = os.path.join(IMAGES_DIR, f"{ts_ms}.jpg")
+    with open(chemin, "wb") as f:
+        f.write(data)
+    if _sauver:
+        _sauver(ts_ms, chemin, hashlib.sha256(data).hexdigest())
+
+
+def _boucle_sequence():
+    """Toutes les secondes : garde l'image en mémoire, ou l'enregistre si un incident est en cours."""
+    while True:
+        debut = time.time()
+        if image_recente(2):
+            try:
+                with open(LIVE, "rb") as f:
+                    data = f.read()
+            except OSError:
+                data = None
+            if data:
+                ts = int(debut * 1000)
+                with _verrou_seq:
+                    en_cours = debut < _enregistrer_jusqua
+                if en_cours:
+                    _ecrire(ts, data)
+                else:
+                    _tampon.append((ts, data))
+        time.sleep(max(0.0, 1.0 - (time.time() - debut)))
+
+
+def declencher():
+    """Appelé à chaque alerte : sauve les 10 s d'avant, enregistre les 10 s d'après (prolongé si nouvelle alerte)."""
+    global _enregistrer_jusqua
+    with _verrou_seq:
+        nouvelle_sequence = time.time() >= _enregistrer_jusqua
+        _enregistrer_jusqua = time.time() + SECONDES_APRES
+    if nouvelle_sequence:
+        while _tampon:
+            ts, data = _tampon.popleft()
+            _ecrire(ts, data)
+
+
+def demarrer(sauver=None):
+    global _sauver
+    _sauver = sauver
     threading.Thread(target=_boucle, daemon=True).start()
+    threading.Thread(target=_boucle_sequence, daemon=True).start()
 
 
 def capturer(chemin: str) -> bool:
