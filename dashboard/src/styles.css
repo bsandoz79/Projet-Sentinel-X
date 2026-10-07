@@ -86,7 +86,8 @@ button.danger { border-color: #7f1d1d !important; color: #fca5a5 !important; }
 .li-go { color: var(--accent); font-size: 13px; }
 
 /* ---------- Timeline ---------- */
-.page-timeline { display: grid; grid-template-columns: 260px 1fr; gap: 16px; }
+.page-timeline { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
+.lecteur { min-width: 0; }   /* sans ça, la longue rangée de vignettes élargit la colonne hors de l'écran */
 .liste-incidents { display: flex; flex-direction: column; gap: 8px; }
 .incident { text-align: left; background: var(--panneau); border: 1px solid var(--bord); border-radius: 10px; padding: 12px; color: var(--texte); }
 .incident.choisi { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -99,12 +100,12 @@ button.danger { border-color: #7f1d1d !important; color: #fca5a5 !important; }
 .controles input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); }
 .temps { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; min-width: 80px; }
 .temps span { color: var(--doux); font-size: 11px; }
-.valeurs-instant { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 12px; }
+.valeurs-instant { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .val { background: var(--panneau); border: 1px solid var(--bord); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; }
 .val span { color: var(--doux); font-size: 11px; }
 .val b { font-size: 18px; }
-.grille-courbes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
-.courbe { background: var(--panneau); border: 1px solid var(--bord); border-radius: 12px; padding: 10px; }
+.grille-courbes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.courbe { min-width: 0; background: var(--panneau); border: 1px solid var(--bord); border-radius: 12px; padding: 10px; }
 .courbe-titre { font-size: 13px; color: var(--doux); margin-bottom: 4px; }
 .evt { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-top: 1px solid var(--bord); font-size: 14px; transition: opacity .3s; }
 .evt.futur { opacity: .3; }
@@ -132,11 +133,11 @@ tr.invalide td, tr.casse td { color: #fca5a5; }
 
 /* ---------- Mobile ---------- */
 @media (max-width: 800px) {
-  .page-timeline { grid-template-columns: 1fr; }
+  .page-timeline { grid-template-columns: minmax(0, 1fr); }
   .liste-incidents { flex-direction: row; overflow-x: auto; }
   .incident { min-width: 200px; }
-  .valeurs-instant { grid-template-columns: repeat(3, 1fr); }
-  .grille-courbes { grid-template-columns: 1fr; }
+  .valeurs-instant { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grille-courbes { grid-template-columns: minmax(0, 1fr); }
   .onglets { margin-left: 0; }
   .li-date { width: auto; }
   .li-alertes { display: none; }
@@ -148,7 +149,7 @@ tr.invalide td, tr.casse td { color: #fca5a5; }
 .camera-alerte { border-color: #ef4444; box-shadow: 0 0 0 2px #ef4444 inset; }
 .rec { color: #ef4444; font-size: 12px; margin-left: 8px; animation: clignote 1.2s infinite; }
 .photo-incident .note { margin-top: 8px; }
-.vignettes { display: flex; gap: 6px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
+.vignettes { max-width: 100%; display: flex; gap: 6px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
 .vignette { padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; flex: none; opacity: .55; }
 .vignette img { width: 72px; height: 41px; object-fit: cover; border-radius: 4px; display: block; }
 .vignette.active { border-color: var(--accent); opacity: 1; }
