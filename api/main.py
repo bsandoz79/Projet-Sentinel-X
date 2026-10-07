@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 import camera
@@ -157,6 +157,7 @@ async def lifespan(app):
         client.connect_async(MQTT_HOST, MQTT_PORT)
         client.loop_start()
         threading.Thread(target=nettoyage, daemon=True).start()
+    camera.demarrer()                                  # capture continue de la webcam
     yield
     if client:
         client.loop_stop()
@@ -217,10 +218,18 @@ def photo(evt_hash: str):
 
 @app.get("/api/camera")
 def camera_live():
-    chemin = camera.image_live() if camera.disponible() else None
+    chemin = camera.image_live()
     if not chemin:
         raise HTTPException(404, "Caméra non disponible")
     return FileResponse(chemin, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/camera/stream")
+def camera_stream():
+    if not camera.disponible():
+        raise HTTPException(404, "Caméra non disponible")
+    return StreamingResponse(camera.flux_mjpeg(), media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/integrite")
@@ -230,4 +239,4 @@ def integrite():
 
 @app.get("/api/sante")
 def sante():
-    return {"ok": True, "camera": camera.disponible()}
+    return {"ok": True, "camera": camera.disponible(), "camera_images": camera.image_recente()}

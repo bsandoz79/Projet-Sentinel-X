@@ -16,7 +16,7 @@ export function real(BASE) {
     getEvenements: () => get('/api/evenements'),
     verifierIntegrite: () => get('/api/integrite'),
     // webcam : image en direct + adresse complète d'une photo d'événement
-    cameraUrl: () => BASE.replace(/\/$/, '') + '/api/camera?t=' + Date.now(),
+    cameraUrl: () => BASE.replace(/\/$/, '') + '/api/camera/stream?t=' + Date.now(),
     urlComplete: (chemin) => BASE.replace(/\/$/, '') + chemin,
   }
 }
