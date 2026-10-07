@@ -40,6 +40,7 @@ ECART_GAZ_ALERTE = 100    # alerte si gaz > référence + 100
 SEUIL_SON        = 600    # 0..1023
 SEUIL_PIR        = 400    # A2 > 400 = mouvement
 
+DHT_TOLERANCE    = 30     # s : on ne signale « DHT erreur » qu'après 30 s sans aucune lecture valide
 DUREE_ALARME     = 5      # s : l'alarme sonne au moins 5 s, relancée tant que l'alerte dure
 
 JOURNAL = "journal_sentinel.jsonl"  # journal chaîné (hash) des événements
@@ -97,7 +98,8 @@ def analog_read(pin):
         gp_cmd(3, pin); time.sleep(0.05)
         r = gp_lire(3)
         return r[1] * 256 + r[2]
-    return essai(f, -1)
+    v = essai(f, -1)
+    return v if 0 <= v <= 1023 else -1      # 65535 = le GrovePi+ ne répond plus : lecture invalide
 
 def ultrason(pin):
     def f():
@@ -221,12 +223,24 @@ def _sirene():
 # =====================================================
 #  Journal chaîné (chaque ligne contient le hash de la précédente)
 # =====================================================
-def dernier_hash():
+def lignes_valides():
+    """Lit le journal en ignorant les lignes abîmées (ex. coupure de courant pendant une écriture)."""
     if not os.path.exists(JOURNAL):
-        return "0" * 64
+        return []
+    evts = []
     with open(JOURNAL, "rb") as f:
-        lignes = f.read().splitlines()
-    return json.loads(lignes[-1])["hash"] if lignes else "0" * 64
+        for ligne in f.read().replace(b"\x00", b"").splitlines():
+            try:
+                evt = json.loads(ligne)
+                if "hash" in evt:
+                    evts.append(evt)
+            except ValueError:
+                print("Journal : ligne abîmée ignorée")
+    return evts
+
+def dernier_hash():
+    evts = lignes_valides()
+    return evts[-1]["hash"] if evts else "0" * 64
 
 prev_hash = dernier_hash()
 
@@ -237,6 +251,7 @@ def journaliser(type_evt, details):
     evt["hash"] = hashlib.sha256(json.dumps(evt, sort_keys=True).encode()).hexdigest()
     with open(JOURNAL, "a") as f:
         f.write(json.dumps(evt) + "\n")
+        f.flush(); os.fsync(f.fileno())     # écrit tout de suite sur la carte SD
     prev_hash = evt["hash"]
     publier("sentinel/evenements", evt, qos=1)
     print("  >> journal :", type_evt, evt["hash"][:12])
@@ -260,11 +275,8 @@ def publier(topic, data, qos=0):
 
 def renvoyer_journal():
     """Renvoie tout le journal local : l'API ignore les doublons (hash unique)."""
-    if os.path.exists(JOURNAL):
-        with open(JOURNAL) as f:
-            for ligne in f:
-                if ligne.strip():
-                    publier("sentinel/evenements", json.loads(ligne), qos=1)
+    for evt in lignes_valides():
+        publier("sentinel/evenements", evt, qos=1)
 
 # =====================================================
 #  Démarrage
@@ -295,6 +307,7 @@ print("Sentinel-X : surveillance active")
 time.sleep(1); renvoyer_journal()
 journaliser("demarrage", {"ref_gaz": ref_gaz})
 etat_prec = None
+dht_ok = None          # dernière lecture valide du DHT : (temp, hum, heure)
 
 # =====================================================
 #  Boucle principale
@@ -302,6 +315,11 @@ etat_prec = None
 try:
     while True:
         temp, hum = dht(PORT_DHT, DHT_TYPE) if AVEC_DHT else (math.nan, math.nan)
+        # Le DHT11 rate parfois une lecture : on garde la dernière bonne valeur pendant DHT_TOLERANCE s
+        if not math.isnan(temp):
+            dht_ok = (temp, hum, time.time())
+        elif dht_ok and time.time() - dht_ok[2] < DHT_TOLERANCE:
+            temp, hum = dht_ok[0], dht_ok[1]
         dist     = ultrason(PORT_US) if AVEC_US else -1
         gaz      = analog_read(PORT_GAZ) if AVEC_GAZ else 0
         son      = analog_read(PORT_SON) if AVEC_SON else 0
@@ -323,7 +341,7 @@ try:
         if AVEC_DHT and not dht_err and temp > SEUIL_TEMP: alertes.append("temperature")
         if AVEC_DHT and not dht_err and hum  > SEUIL_HUM:  alertes.append("humidite")
         if AVEC_US  and 0 < dist < DIST_ALERTE:             alertes.append("intrusion")
-        if AVEC_GAZ and gaz > ref_gaz + ECART_GAZ_ALERTE:    alertes.append("gaz")
+        if AVEC_GAZ and ref_gaz > 0 and gaz > ref_gaz + ECART_GAZ_ALERTE: alertes.append("gaz")
         if AVEC_SON and son > SEUIL_SON:                     alertes.append("bruit")
         # Levée de doute : mouvement + approche = alerte
         if AVEC_PIR and AVEC_US and presence and 0 < dist < DIST_VIGILANCE: alertes.append("presence")
@@ -341,8 +359,8 @@ try:
 
         # ----- Écran -----
         l1 = "DHT erreur" if dht_err else (f"{temp:.0f}C {hum:.0f}%  " + (f"{dist}cm" if dist > 0 else "") if AVEC_DHT else "Sentinel-X")
-        if dht_err:      etat = "DHT"
-        elif alertes:    etat = "ALERTE"
+        if alertes:      etat = "ALERTE"       # une alerte passe avant une panne du DHT
+        elif dht_err:    etat = "DHT"
         elif vigilance:  etat = "VIGILANCE"
         else:            etat = "OK"
 
