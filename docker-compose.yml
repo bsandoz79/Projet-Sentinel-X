@@ -1,0 +1,36 @@
+# SENTINEL-X : docker compose up -d --build
+# Si Mosquitto tourne DÉJÀ sur le Pi (port 1883) : ne rien changer.
+# Si Mosquitto n'est PAS installé : docker compose --profile mqtt up -d --build
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    profiles: ["mqtt"]
+    restart: unless-stopped
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto-data:/mosquitto/data
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    network_mode: host            # joint Mosquitto sur localhost:1883, qu'il soit en Docker ou installé sur le Pi
+    environment:
+      MQTT_HOST: localhost
+      MQTT_PORT: 1883
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASS: ${MQTT_PASS:-}
+    volumes:
+      - api-data:/data
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        VITE_API_URL: ${API_URL:-http://sentinel.local:8000}
+    restart: unless-stopped
+    ports: ["8080:80"]
+
+volumes:
+  mosquitto-data:
+  api-data:

@@ -1,0 +1,17 @@
+# Lance sentinel_pi.py au démarrage du Pi et le relance s'il plante
+# Installation : sudo cp sentinel.service /etc/systemd/system/ && sudo systemctl enable --now sentinel
+[Unit]
+Description=Sentinel-X capteurs
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=admin
+WorkingDirectory=/home/admin/sentinel-x/capteurs
+ExecStart=/usr/bin/python3 /home/admin/sentinel-x/capteurs/sentinel_pi.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
