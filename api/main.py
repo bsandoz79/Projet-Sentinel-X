@@ -15,8 +15,10 @@ from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+import camera
 from chaine import verifier_chaine
 
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
@@ -43,6 +45,9 @@ CREATE TABLE IF NOT EXISTS evenements (
   ts TEXT NOT NULL, type TEXT NOT NULL, details TEXT NOT NULL,
   prev TEXT NOT NULL, hash TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS photos (
+  evt_hash TEXT PRIMARY KEY, fichier TEXT NOT NULL, sha256 TEXT NOT NULL, ts INTEGER NOT NULL
+);
 """)
 db.commit()
 
@@ -55,11 +60,30 @@ def iso_vers_ms(ts: str) -> int:
     return int(d.timestamp() * 1000)
 
 
-def lignes_evenements(sql="SELECT * FROM evenements ORDER BY id", args=()):
+def lignes_evenements(avec_photos=False):
     with verrou:
-        rows = db.execute(sql, args).fetchall()
-    return [{"id": r["id"], "ts": r["ts"], "type": r["type"], "details": json.loads(r["details"]),
-             "prev": r["prev"], "hash": r["hash"]} for r in rows]
+        rows = db.execute("SELECT * FROM evenements ORDER BY id").fetchall()
+        photos = {p["evt_hash"]: p["sha256"] for p in db.execute("SELECT evt_hash, sha256 FROM photos")} if avec_photos else {}
+    evts = []
+    for r in rows:
+        e = {"id": r["id"], "ts": r["ts"], "type": r["type"], "details": json.loads(r["details"]),
+             "prev": r["prev"], "hash": r["hash"]}
+        if r["hash"] in photos:                      # hors du hash : la photo a sa propre empreinte
+            e["photo"] = f"/api/photos/{r['hash']}"
+            e["photo_sha256"] = photos[r["hash"]]
+        evts.append(e)
+    return evts
+
+
+def photographier(evt_hash: str):
+    """Photo prise au moment d'une alerte, rangée avec son empreinte SHA-256."""
+    chemin = os.path.join(camera.PHOTOS_DIR, f"{evt_hash[:16]}.jpg")
+    if camera.capturer(chemin):
+        with verrou:
+            db.execute("INSERT OR IGNORE INTO photos VALUES (?, ?, ?, ?)",
+                       (evt_hash, chemin, camera.sha256_fichier(chemin), int(time.time() * 1000)))
+            db.commit()
+        print("Photo enregistrée :", chemin)
 
 
 def calculer_incidents():
@@ -97,14 +121,18 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload)
+        nouvelle_alerte = False
         with verrou:
             if msg.topic == "sentinel/capteurs":
                 db.execute("INSERT OR REPLACE INTO mesures VALUES (?, ?)", (int(data["ts"]), json.dumps(data)))
             elif msg.topic == "sentinel/evenements":
-                db.execute(
+                cur = db.execute(
                     "INSERT OR IGNORE INTO evenements (ts, type, details, prev, hash) VALUES (?, ?, ?, ?, ?)",
                     (data["ts"], data["type"], json.dumps(data["details"]), data["prev"], data["hash"]))
+                nouvelle_alerte = cur.rowcount == 1 and data["type"] == "alerte"
             db.commit()
+        if msg.topic == "sentinel/evenements" and nouvelle_alerte and camera.disponible():
+            threading.Thread(target=photographier, args=(data["hash"],), daemon=True).start()
     except Exception as ex:  # un message mal formé ne doit pas arrêter l'API
         print("Message ignoré :", msg.topic, ex)
 
@@ -169,13 +197,30 @@ def replay(inc_id: int):
         m = json.loads(r["data"])
         m["t"] = round((m["ts"] - debut) / 1000)
         mesures.append(m)
-    evts = [e for e in lignes_evenements() if e["id"] in inc["evenements"]]
+    evts = [e for e in lignes_evenements(avec_photos=True) if e["id"] in inc["evenements"]]
     return {**{k: v for k, v in inc.items() if k != "evenements"}, "mesures": mesures, "evenements": evts}
 
 
 @app.get("/api/evenements")
 def evenements():
-    return lignes_evenements()
+    return lignes_evenements(avec_photos=True)
+
+
+@app.get("/api/photos/{evt_hash}")
+def photo(evt_hash: str):
+    with verrou:
+        r = db.execute("SELECT fichier FROM photos WHERE evt_hash = ?", (evt_hash,)).fetchone()
+    if not r or not os.path.exists(r["fichier"]):
+        raise HTTPException(404, "Pas de photo pour cet événement")
+    return FileResponse(r["fichier"], media_type="image/jpeg")
+
+
+@app.get("/api/camera")
+def camera_live():
+    chemin = camera.image_live() if camera.disponible() else None
+    if not chemin:
+        raise HTTPException(404, "Caméra non disponible")
+    return FileResponse(chemin, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/integrite")
@@ -185,4 +230,4 @@ def integrite():
 
 @app.get("/api/sante")
 def sante():
-    return {"ok": True}
+    return {"ok": True, "camera": camera.disponible()}

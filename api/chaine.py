@@ -6,8 +6,8 @@ GENESE = "0" * 64
 
 
 def calculer_hash(evt: dict) -> str:
-    """sha256 du JSON trié de l'événement, sans les champs 'hash' et 'id'."""
-    contenu = {k: v for k, v in evt.items() if k not in ("hash", "id")}
+    """sha256 du JSON trié de l'événement, sans hash, id ni champs photo."""
+    contenu = {k: v for k, v in evt.items() if k not in ("hash", "id", "photo", "photo_sha256")}
     return hashlib.sha256(json.dumps(contenu, sort_keys=True).encode()).hexdigest()
 
 

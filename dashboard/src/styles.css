@@ -142,3 +142,9 @@ tr.invalide td, tr.casse td { color: #fca5a5; }
   .li-alertes { display: none; }
   .evt-hash { display: none; }
 }
+
+/* ---------- Webcam ---------- */
+.camera img, .photo-incident img { width: 100%; max-width: 640px; border-radius: 10px; display: block; background: #000; }
+.camera-alerte { border-color: #ef4444; box-shadow: 0 0 0 2px #ef4444 inset; }
+.rec { color: #ef4444; font-size: 12px; margin-left: 8px; animation: clignote 1.2s infinite; }
+.photo-incident .note { margin-top: 8px; }

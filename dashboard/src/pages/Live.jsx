@@ -3,6 +3,7 @@ import { api } from '../api'
 import { NOMS_ALERTES, SEUILS, fmtHeure, fmtDate } from '../utils.js'
 import BandeauEtat from '../components/BandeauEtat.jsx'
 import CarteCapteur from '../components/CarteCapteur.jsx'
+import CameraLive from '../components/CameraLive.jsx'
 
 const MAX_POINTS = 120 // 2 minutes d'historique dans les mini-courbes
 
@@ -64,6 +65,8 @@ export default function Live({ ouvrirIncident }) {
         <CarteCapteur titre="Mouvement" valeur={mesure.pir ? 'OUI' : 'non'} alerte={a.includes('presence')}
           sous={mesure.pir ? 'quelqu’un bouge' : 'rien détecté'} />
       </div>
+
+      {api.cameraUrl && <CameraLive alerte={mesure.etat === 'alerte'} />}
 
       {api.simuler && (
         <div className="panneau demo">

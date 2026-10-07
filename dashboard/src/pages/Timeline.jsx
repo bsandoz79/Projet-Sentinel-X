@@ -54,6 +54,10 @@ export default function Timeline({ incidentInitial }) {
     [replay, courante]
   )
 
+  // Photo de la webcam : la dernière prise avant la position du curseur
+  const photos = (replay?.evenements || []).filter((e) => e.photo)
+  const photoCourante = [...photos].reverse().find((e) => evtsPasses.includes(e)) || null
+
   return (
     <div className="page-timeline">
       <aside className="liste-incidents">
@@ -106,6 +110,22 @@ export default function Timeline({ incidentInitial }) {
               <Val l="Mouvement" v={courante.pir ? 'OUI' : 'non'} />
             </div>
 
+            {photos.length > 0 && (
+              <div className="panneau photo-incident">
+                <div className="panneau-titre">Photo de la webcam</div>
+                {photoCourante ? (
+                  <>
+                    <img src={api.urlComplete(photoCourante.photo)} alt="Photo prise pendant l'alerte" />
+                    <div className="note">
+                      Prise à {fmtHeure(photoCourante.ts)} · empreinte SHA-256 : <code>{photoCourante.photo_sha256.slice(0, 16)}…</code>
+                    </div>
+                  </>
+                ) : (
+                  <div className="note">La photo apparaîtra au moment de l'alerte (avance la lecture).</div>
+                )}
+              </div>
+            )}
+
             <div className="grille-courbes">
               {COURBES.map((c) => (
                 <div className="courbe" key={c.cle}>
@@ -137,6 +157,7 @@ export default function Timeline({ incidentInitial }) {
                     <span className="evt-heure">{fmtHeure(e.ts)}</span>
                     <span className="evt-type">{ETATS[e.type]?.label || e.type}</span>
                     <span className="evt-detail">{(e.details.alertes || []).map((a) => NOMS_ALERTES[a] || a).join(', ')}</span>
+                    {e.photo && <span title="Photo webcam">📷</span>}
                     <code className="evt-hash">#{e.hash.slice(0, 8)}</code>
                   </div>
                 )
