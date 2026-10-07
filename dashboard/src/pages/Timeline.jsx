@@ -57,6 +57,14 @@ export default function Timeline({ incidentInitial }) {
   // Photo de la webcam : la dernière prise avant la position du curseur
   const photos = (replay?.evenements || []).filter((e) => e.photo)
   const photoCourante = [...photos].reverse().find((e) => evtsPasses.includes(e)) || null
+  // Séquence vidéo de l'incident (1 image / s, 10 s avant -> 10 s après) synchronisée avec le curseur
+  const images = replay?.images || []
+  const idxImage = (() => {
+    let k = -1
+    images.forEach((im, i) => { if (im.t <= tCourant) k = i })
+    return k
+  })()
+  const imageCourante = idxImage >= 0 ? images[idxImage] : null
 
   return (
     <div className="page-timeline">
@@ -110,7 +118,35 @@ export default function Timeline({ incidentInitial }) {
               <Val l="Mouvement" v={courante.pir ? 'OUI' : 'non'} />
             </div>
 
-            {photos.length > 0 && (
+            {images.length > 0 && (
+              <div className="panneau photo-incident">
+                <div className="panneau-titre">
+                  Caméra de l'incident <span className="note">· 1 image / s · synchronisée avec la lecture</span>
+                </div>
+                {imageCourante ? (
+                  <>
+                    <img src={api.urlComplete(imageCourante.url)} alt="Image de l'incident" />
+                    <div className="note">
+                      Image {idxImage + 1}/{images.length} · {imageCourante.t >= 0 ? `T+${imageCourante.t}` : `T${imageCourante.t}`} s ·
+                      {' '}{fmtHeure(imageCourante.ts)} · SHA-256 : <code>{imageCourante.sha256.slice(0, 16)}…</code>
+                    </div>
+                    <div className="vignettes">
+                      {images.map((im, i) => (
+                        <button key={im.ts} className={'vignette' + (i === idxImage ? ' active' : '')}
+                          onClick={() => { const p = mesures.findIndex((m) => m.t >= im.t); if (p >= 0) { setPos(p); setLecture(false) } }}
+                          title={`T${im.t >= 0 ? '+' : ''}${im.t} s`}>
+                          <img src={api.urlComplete(im.url)} alt="" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="note">Les images commencent {Math.abs(images[0].t)} s avant l'alerte : avance la lecture.</div>
+                )}
+              </div>
+            )}
+
+            {images.length === 0 && photos.length > 0 && (
               <div className="panneau photo-incident">
                 <div className="panneau-titre">Photo de la webcam</div>
                 {photoCourante ? (
