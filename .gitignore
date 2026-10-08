@@ -7,3 +7,4 @@ __pycache__/
 capteurs/journal_sentinel.jsonl
 *.log
 .sentinel.lock
+mosquitto/secrets/

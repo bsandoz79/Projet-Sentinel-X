@@ -47,7 +47,7 @@ cd dashboard && echo VITE_API_URL=http://localhost:8000 > .env && npm install &&
 
 ## Vérifications rapides
 ```bash
-mosquitto_sub -h localhost -t 'sentinel/#' -v      # voir passer les messages
+mosquitto_sub -h localhost -u api -P "$MQTT_API_PASS" -t 'sentinel/#' -v   # voir passer les messages (après : set -a; . ./.env)
 curl http://localhost:8000/api/live                 # dernière mesure
 curl http://localhost:8000/api/integrite            # {"ok": true, ...}
 cd api && pytest -q                                  # 5 tests
@@ -57,6 +57,12 @@ cd api && pytest -q                                  # 5 tests
 - `sentinel/capteurs` : 1 mesure / seconde `{ts, temp, hum, dist, gaz, ref_gaz, son, pir, etat, alertes}`
 - `sentinel/evenements` (QoS 1) : changement d'état `{ts, type, details, prev, hash}` avec `hash = sha256(json trié sans "hash")`
 
-## Sécurité (à faire / à présenter)
-- Mot de passe MQTT : `mosquitto_passwd -c passwd sentinel`, puis `allow_anonymous false` dans `mosquitto.conf`, et `MQTT_USER` / `MQTT_PASS` pour l'API et le script.
+## Sécurité
+- **MQTT authentifié** : plus de connexion anonyme. Sur le Pi, une seule commande : `./securiser_mqtt.sh`
+  - crée `.env` avec des mots de passe aléatoires (jamais versionné, voir `.env.example`) ;
+  - génère `mosquitto/secrets/passwd` (mots de passe **hachés**) et applique `mosquitto/acl` ;
+  - redémarre Mosquitto, l'API et le service capteurs.
+- **Moindre privilège (ACL)** : le compte `capteurs` peut seulement **écrire** `sentinel/capteurs` et `sentinel/evenements`, le compte `api` peut seulement **lire** `sentinel/#`. Un compte volé ne permet pas d'injecter de faux événements depuis l'API.
+- Connexions refusées visibles : `docker logs mosquitto | grep "not authorised"`.
+- Simulateur avec le broker sécurisé : `python3 capteurs/simulateur.py --host <ip> --user capteurs --password <MQTT_CAPTEURS_PASS>`.
 - Limite connue du hash chaîné : il détecte une **modification** ou une **suppression au milieu**, mais pas la suppression des **derniers** événements → amélioration : copie du dernier hash ailleurs (autre machine, signature horodatée).

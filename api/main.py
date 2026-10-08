@@ -122,7 +122,10 @@ def calculer_incidents():
 
 # ---------------------------------------------------------------- MQTT
 def on_connect(client, userdata, flags, reason_code, properties=None):
-    print("MQTT connecté :", reason_code)
+    if reason_code.is_failure:
+        print("MQTT : connexion REFUSÉE ->", reason_code, "(vérifie MQTT_API_USER / MQTT_API_PASS dans .env)")
+        return
+    print("MQTT connecté en tant que", MQTT_USER or "anonyme")
     client.subscribe([("sentinel/capteurs", 0), ("sentinel/evenements", 1)])
 
 
