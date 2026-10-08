@@ -179,8 +179,10 @@ Une **alerte passe toujours avant** une panne du DHT : même si le DHT est en er
 |---|---|---|
 | OK | vert, « 24C 51% / Tout est OK » | éteints |
 | Vigilance | orange | éteints |
-| Alerte | rouge, « ALERTE intrusion » | **sirène** : bip-bip rapide (0,25 s) + LED |
-| Fin d'alerte (5 s) | rouge, « Fin d'alarme... » | la sirène finit ses 5 s puis s'arrête |
+| Alerte | **rouge clignotant** au rythme de la sirène, « ALERTE intrusion » | **sirène** : bip-bip rapide (0,25 s) + LED qui clignote |
+| Fin d'alerte (5 s) | rouge clignotant, « Fin d'alarme... » | la sirène finit ses 5 s puis s'arrête |
+
+La LED de D8 est une LED 5 mm **multicolore** (elle change de couleur toute seule) : le code peut l'allumer et l'éteindre, mais pas choisir sa couleur. C'est le rétroéclairage RGB de l'écran qui donne le **rouge clignotant**. Pour une LED rouge, il suffit de remplacer la LED 5 mm du module Grove par une LED rouge (patte longue côté +).
 | DHT en erreur | violet, « Verifier DHT » | — |
 
 4. **Publication MQTT** de la mesure (1 par seconde).
@@ -238,7 +240,7 @@ Exemple de mesure :
 
 ## 7. API FastAPI
 
-Fichiers : `api/main.py`, `api/chaine.py`, `api/camera.py`. Elle tourne dans Docker (`network_mode: host`, port 8000). La documentation interactive Swagger est disponible sur `http://IP-du-Pi:8000/docs`.
+Fichiers : `api/main.py`, `api/chaine.py`, `api/camera.py`. Elle tourne dans Docker (`network_mode: host`, port 8000) et n'écoute que sur `127.0.0.1` : on ne peut l'atteindre que par le dashboard sécurisé (`http://IP-du-Pi:8080/api/...`, avec mot de passe). Pour du développement, `API_HOST=0.0.0.0` dans `.env` la rouvre temporairement (Swagger sur `:8000/docs`).
 
 ### Base SQLite (`/data/sentinel.db`, volume Docker)
 
@@ -319,7 +321,9 @@ Un badge « Journal intègre ✔ / falsifié ✘ » est vérifié toutes les 5 s
 **Deux modes :**
 
 - **Démo** (`VITE_API_URL` vide) : données simulées dans le navigateur, avec des boutons pour simuler des incidents et falsifier le journal ;
-- **Connecté au Pi** (`VITE_API_URL=http://IP-du-Pi:8000`) : données réelles.
+- **Connecté au Pi** (`VITE_API_URL=/`) : données réelles. L'API passe par le même nginx que les pages, donc par le même mot de passe.
+
+**Accès protégé** : le dashboard demande un identifiant et un mot de passe (HTTP Basic Auth géré par nginx). Sans eux, les pages, l'API et la caméra répondent `401`.
 
 Le dashboard est responsive : il est utilisable sur téléphone.
 
@@ -348,8 +352,8 @@ Le dashboard est responsive : il est utilisable sur téléphone.
 | Service | Image | Port |
 |---|---|---|
 | `mosquitto` | `eclipse-mosquitto:2`, conteneur `mosquitto`, authentification + ACL (`mosquitto/secrets`, généré par `securiser_mqtt.sh`) | 1883 |
-| `api` | build `./api` (Python 3.12 + ffmpeg) | 8000 (réseau hôte) |
-| `dashboard` | build `./dashboard` (Node → nginx), ou nginx + fichiers déjà construits | 8080 |
+| `api` | build `./api` (Python 3.12 + ffmpeg) | 8000, **local au Pi uniquement** |
+| `dashboard` | `nginx:alpine` : fichiers construits sur le PC + **mot de passe** + relais `/api` → API (`nginx/sentinel.conf`) | 8080 (seul port web ouvert) |
 
 Tous les services ont `restart: unless-stopped` : ils redémarrent automatiquement avec le Pi.
 
@@ -375,6 +379,7 @@ cd Projet-Sentinel-X
 
 # Serveur : MQTT sécurisé (crée .env + mots de passe), puis l'API
 bash securiser_mqtt.sh
+bash securiser_dashboard.sh
 nohup docker compose up -d --build api > build.log 2>&1 &
 
 # Script capteurs en service
@@ -387,16 +392,14 @@ sudo systemctl daemon-reload && sudo systemctl enable --now sentinel
 
 ```powershell
 cd dashboard
-echo VITE_API_URL=http://IP-du-Pi:8000 > .env
+Set-Content -Path .env -Value "VITE_API_URL=/" -Encoding ascii   # pas "echo > .env" (UTF-16 illisible par Vite)
 npm install
 npm run build
 scp -r dist/* jawad@IP-du-Pi:~/dashboard-dist/
 ```
 ```bash
-# sur le Pi, une seule fois
-chmod -R a+rX ~/dashboard-dist
-docker run -d --name dashboard --restart unless-stopped -p 8080:80 \
-  -v ~/dashboard-dist:/usr/share/nginx/html:ro nginx:alpine
+# sur le Pi, une seule fois : mot de passe + nginx + API fermée
+bash securiser_dashboard.sh      # affiche l'identifiant et le mot de passe (gardés dans .env)
 ```
 
 ### Mise à jour
@@ -417,8 +420,8 @@ journalctl -u sentinel -f             # « MQTT : connecté en tant que capteurs
 | Service | Adresse |
 |---|---|
 | Dashboard | `http://IP-du-Pi:8080` |
-| API + Swagger | `http://IP-du-Pi:8000/docs` |
-| Santé | `http://IP-du-Pi:8000/api/sante` |
+| Santé de l'API | `http://IP-du-Pi:8080/api/sante` (avec le mot de passe) |
+| Identifiants du dashboard | `grep DASHBOARD ~/Projet-Sentinel-X/.env` |
 | Logs du script | `journalctl -u sentinel -f` |
 | Logs de l'API | `docker logs projet-sentinel-x-api-1 --tail 50` |
 | Connexions MQTT refusées | `docker logs mosquitto \| grep "not authorised"` |
@@ -449,6 +452,16 @@ journalctl -u sentinel -f             # « MQTT : connecté en tant que capteurs
 - `api/test_chaine.py` (pytest, lancés par la CI) : intégrité, modification, suppression, recalcul frauduleux, compatibilité du calcul avec le script du Pi.
 - Tests de bout en bout réalisés pendant le développement : simulateur → Mosquitto → API → dashboard, falsification en base détectée, séquence caméra avec une fausse webcam.
 - Test du verrou : une 2e copie du script est refusée, une nouvelle copie repart après l'arrêt de la 1re.
+- Test de la protection du dashboard (nginx avec `nginx/sentinel.conf`, API sur 127.0.0.1) :
+
+| Essai | Code HTTP |
+|---|---|
+| Page ou API sans mot de passe | 401 ✅ |
+| Mauvais mot de passe | 401 ✅ |
+| Page, route `/timeline` et API avec le bon mot de passe | 200 ✅ |
+| `/docs` (Swagger) | 404 ✅ |
+| API directement sur le port 8000 depuis le réseau | refusé (écoute seulement sur 127.0.0.1) ✅ |
+
 - Test de la sécurité MQTT (Mosquitto 2 avec la configuration du projet) :
 
 | Essai | Résultat attendu | Obtenu |
@@ -483,14 +496,17 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 - **moindre privilège (ACL)** : `capteurs` ne peut qu'écrire, `api` ne peut que lire ; un compte volé ne permet pas d'injecter de faux événements depuis l'API ;
 - secrets dans `.env` (droits 600), **jamais versionné** (`.gitignore`) ; modèle sans secret : `.env.example` ;
 - une seule commande pour tout mettre en place : `bash securiser_mqtt.sh` ;
-- connexions refusées tracées dans les logs de Mosquitto.
+- connexions refusées tracées dans les logs de Mosquitto ;
+- **dashboard protégé par mot de passe** (nginx, mot de passe haché) : pages, API et caméra ; `bash securiser_dashboard.sh` ;
+- **API fermée au réseau** : elle n'écoute que sur le Pi, seul le port 8080 (protégé) est exposé ; Swagger non exposé ;
+- en-têtes de sécurité (anti-iframe, `nosniff`, pas de `Referer`), version de nginx masquée, limitation des rafales de requêtes.
 
 **À activer ou à améliorer :**
 
 | Risque | Mesure |
 |---|---|
 | Mots de passe MQTT lisibles sur le réseau (pas de chiffrement) | TLS sur MQTT (port 8883) avec certificat |
-| Dashboard et API sans authentification | page de connexion + jeton (JWT) sur l'API, HTTPS via un reverse proxy |
+| Mot de passe du dashboard envoyé en clair (HTTP) | HTTPS sur nginx (certificat local ou Let's Encrypt) |
 | Suppression de la fin du journal | copier régulièrement le dernier hash vers une autre machine, ou le signer avec horodatage |
 | Accès physique au Pi | boîtier fermé, carte SD chiffrée, sauvegardes |
 
@@ -527,12 +543,12 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 - la suppression de la **fin** du journal n'est pas détectable sans copie externe ;
 - le DHT11 est peu précis (±2 °C, ±5 %) ;
 - le MQ-2 n'est pas étalonné en ppm : il détecte une variation, pas une concentration ;
-- pas d'authentification sur le dashboard et l'API pour l'instant ;
+- un seul compte pour le dashboard (pas de rôles lecture / admin) ;
 - MQTT authentifié mais pas encore chiffré (TLS).
 
 **Améliorations prévues :**
 
-1. Sécurité : TLS sur MQTT, connexion sur le dashboard, HTTPS, journal signé (HMAC) pour qu'il soit impossible de recalculer la chaîne sans la clé.
+1. Sécurité : TLS sur MQTT, HTTPS sur le dashboard, comptes avec rôles, journal signé (HMAC) pour qu'il soit impossible de recalculer la chaîne sans la clé.
 2. Ancrage du journal : envoi périodique du dernier hash vers un serveur distant, ou signature horodatée (RFC 3161).
 3. Détection de personnes par IA (YOLO) sur les images de la caméra, comme 3e niveau de levée de doute.
 4. Notifications : e-mail ou SMS à chaque alerte.
@@ -564,6 +580,8 @@ Projet-Sentinel-X/
 │   ├── mosquitto.conf        # broker : anonyme interdit, logs
 │   └── acl                   # droits par compte
 ├── securiser_mqtt.sh         # crée .env + mots de passe MQTT, redémarre les services
+├── securiser_dashboard.sh    # mot de passe du dashboard, relance nginx + API
+├── nginx/sentinel.conf       # dashboard : mot de passe, relais /api, en-têtes de sécurité
 ├── .env.example              # modèle (le vrai .env n'est jamais versionné)
 ├── docker-compose.yml
 ├── .github/workflows/ci.yml  # CI GitHub Actions
@@ -604,3 +622,5 @@ Chaque `feat` ou `fix` mergé dans `main` est ajouté ici.
 | 08/10 | feat | `feature/mqtt-securise` | MQTT authentifié, un compte par programme, ACL (moindre privilège), secrets dans `.env`, script `securiser_mqtt.sh` |
 | 08/10 | docs | `feature/mqtt-securise` | schéma « où va quoi » dans le boîtier (section 4) |
 | 08/10 | fix | `fix/pir-vigilance` | le PIR ne déclenche plus l'alarme : mouvement = vigilance, l'alarme dépend de la distance (< 30 cm) |
+| 08/10 | feat | `feature/dashboard-securise` | dashboard protégé par mot de passe (nginx), API fermée au réseau (127.0.0.1), relais `/api`, en-têtes de sécurité, script `securiser_dashboard.sh` |
+| 08/10 | feat | `feature/alarme-visuelle` | écran qui clignote en rouge au rythme de la sirène pendant l'alarme |
