@@ -49,7 +49,7 @@ Sentinel-X fonctionne comme la boîte noire d'un avion :
 | Fonction | Ce que fait Sentinel-X |
 |---|---|
 | **Détecter** | 5 capteurs : température/humidité, distance, mouvement, gaz, son |
-| **Confirmer** | Levée de doute : un mouvement seul donne une *vigilance*, un mouvement avec une approche donne une *alerte* |
+| **Confirmer** | Levée de doute : un mouvement (PIR) ou une présence à moins de 1 m donne une *vigilance* ; seule une approche à moins de 30 cm (distance mesurée) déclenche l'*alerte* |
 | **Alerter** | Écran couleur, LED, haut-parleur, dashboard en direct |
 | **Enregistrer** | Chaque changement d'état est écrit dans un **journal chaîné par hash SHA-256** |
 | **Prouver** | Une séquence caméra (10 s avant / 10 s après chaque alerte) avec l'empreinte de chaque image |
@@ -128,6 +128,18 @@ Le premier prototype utilisait un **ESP8266** (NodeMCU) sur breadboard. Tous les
 | Intérieur | Cloison qui sépare le Pi (chaud) des capteurs, avec un passage de câbles de 40 × 22 mm ; 4 plots M2,5 pour le Pi ; aération sous le Pi |
 | Couvercle | Grille pour un ventilateur de 40 mm au-dessus du Pi, fentes d'aération, nom gravé |
 
+### Où va quoi
+
+![Placement des composants dans le boîtier](img/boitier_placement.png)
+
+| Emplacement | Composant | Port GrovePi+ |
+|---|---|---|
+| Façade | Écran LCD RGB · PIR · ultrasons · LED | I2C · A2 · D4 · D8 |
+| Côté droit (de l'avant vers l'arrière) | DHT11 · haut-parleur · MQ-2 | D7 · D3 · A0 (fils Dupont) |
+| Arrière | Capteur de son | A1 |
+| Arrière gauche | Raspberry Pi 4 + GrovePi+ | — |
+| Couvercle | Webcam USB (câble par la fenêtre gauche) | USB |
+
 **Fichiers** (dossier `boitier/`) :
 
 - `sentinel_v2_base.stl` et `sentinel_v2_couvercle.stl` : prêts à imprimer, compatibles Tinkercad (import en mm, échelle 100 %) ;
@@ -154,8 +166,9 @@ Fichier : `capteurs/sentinel_pi.py`. Il est lancé au démarrage par le service 
 | Distance < 30 cm | alerte `intrusion` |
 | Gaz > référence + 100 | alerte `gaz` |
 | Son > 600 | alerte `bruit` |
-| **PIR + distance < 100 cm** | alerte `presence` (**levée de doute**) |
-| PIR seul, distance < 100 cm, valeurs proches des seuils | **vigilance** |
+| Mouvement PIR, distance < 100 cm, valeurs proches des seuils | **vigilance** (pas d'alarme) |
+
+**Levée de doute** : le PIR seul ne déclenche **jamais** l'alarme (un chat, un courant d'air chaud ou quelqu'un qui passe au loin suffisent à l'activer). Il met le système en vigilance, et c'est la **distance mesurée** par les ultrasons qui décide de l'alerte.
 | Aucune lecture DHT valide depuis 30 s | état `dht` (capteur en erreur) |
 
 Une **alerte passe toujours avant** une panne du DHT : même si le DHT est en erreur, une intrusion déclenche bien l'alarme, la caméra et le journal.
@@ -421,7 +434,7 @@ journalctl -u sentinel -f             # « MQTT : connecté en tant que capteurs
 | DHT11 | souffle sur le capteur | 51 % → 95 %, 24 → 27 °C, **alerte humidité** ✅ |
 | Ultrasons | main à 16 cm | **alerte intrusion** ✅ |
 | PIR | mouvement devant | **vigilance** ✅ |
-| PIR + ultrasons | approche | **alerte présence** (levée de doute) ✅ |
+| PIR + ultrasons | mouvement au loin, puis approche à moins de 30 cm | vigilance, puis **alerte intrusion** seulement à 30 cm ✅ |
 | MQ-2 | après chauffe | référence ≈ 360, stable ✅ |
 | Son | bruit / silence | 0 → 240 ✅ |
 | Écran, LED, haut-parleur | pendant une alerte | rouge, clignote, bipe ✅ |
@@ -589,3 +602,5 @@ Chaque `feat` ou `fix` mergé dans `main` est ajouté ici.
 | 07/10 | fix | `feature/alarme-continue` (PR #6) | Timeline qui débordait de l'écran avec beaucoup de vignettes |
 | 08/10 | fix | `fix/capteurs-robustes` | journal tolérant aux coupures, lectures 65535 ignorées (3 essais), alerte prioritaire sur la panne DHT, tolérance DHT 30 s, verrou « une seule copie du script » |
 | 08/10 | feat | `feature/mqtt-securise` | MQTT authentifié, un compte par programme, ACL (moindre privilège), secrets dans `.env`, script `securiser_mqtt.sh` |
+| 08/10 | docs | `feature/mqtt-securise` | schéma « où va quoi » dans le boîtier (section 4) |
+| 08/10 | fix | `fix/pir-vigilance` | le PIR ne déclenche plus l'alarme : mouvement = vigilance, l'alarme dépend de la distance (< 30 cm) |
