@@ -241,6 +241,7 @@ def _sirene():
             allume = not allume                    # bip-bip rapide : 0,25 s on / 0,25 s off
             if AVEC_HP:  analog_write(PORT_HP, 200 if allume else 0)
             if AVEC_LED: digital_write(PORT_LED, 1 if allume else 0)
+            couleur(255, 0, 0) if allume else couleur(30, 0, 0)   # écran : clignote en rouge avec la sirène
             time.sleep(0.25)
         else:
             if allume:                             # fin de l'alarme : on éteint tout
@@ -402,8 +403,8 @@ try:
         else:            etat = "OK"
 
         if etat == "DHT":         couleur(255, 0, 255);  texte(l1, "Verifier DHT")
-        elif etat == "ALERTE":    couleur(255, 0, 0);    texte(l1, "ALERTE " + alertes[0]); alarme()
-        elif time.time() < _fin_alarme: couleur(255, 0, 0); texte(l1, "Fin d'alarme...")   # les 5 s après l'alerte
+        elif etat == "ALERTE":    texte(l1, "ALERTE " + alertes[0]); alarme()   # couleur : gérée par la sirène (rouge clignotant)
+        elif time.time() < _fin_alarme: texte(l1, "Fin d'alarme...")             # les 5 s après l'alerte
         elif etat == "VIGILANCE": couleur(255, 120, 0);  texte(l1, "Vigilance")
         else:                     couleur(0, 200, 80);   texte(l1, "Tout est OK")
 
