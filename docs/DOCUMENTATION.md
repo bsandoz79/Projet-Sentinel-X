@@ -3,7 +3,7 @@
 **Boîte noire de sécurité IoT : capteurs, journal infalsifiable et timeline d'incidents rejouable**
 
 Workshop EPSI Mastère 1 · « Mission Sentinel-X » · octobre 2026  
-Équipe : Baptiste Sandoz, Jawad et les membres du groupe  
+Équipe : Baptiste Sandoz, Rémi Edmond, Jawad Assahnoun  
 Dépôt : https://github.com/bsandoz79/Projet-Sentinel-X
 
 ![Boîtier Sentinel-X fermé, webcam posée sur le couvercle](img/boitier_ferme.png)
@@ -29,6 +29,7 @@ Dépôt : https://github.com/bsandoz79/Projet-Sentinel-X
 15. [Difficultés rencontrées et solutions](#15-difficultés-rencontrées-et-solutions)
 16. [Limites et améliorations](#16-limites-et-améliorations)
 17. [Annexes](#17-annexes)
+18. [Journal des modifications](#18-journal-des-modifications)
 
 ---
 
@@ -48,7 +49,7 @@ Sentinel-X fonctionne comme la boîte noire d'un avion :
 | Fonction | Ce que fait Sentinel-X |
 |---|---|
 | **Détecter** | 5 capteurs : température/humidité, distance, mouvement, gaz, son |
-| **Confirmer** | Levée de doute : un mouvement seul donne une *vigilance*, un mouvement avec une approche donne une *alerte* |
+| **Confirmer** | Levée de doute : un mouvement (PIR) ou une présence à moins de 1 m donne une *vigilance* ; seule une approche à moins de 30 cm (distance mesurée) déclenche l'*alerte* |
 | **Alerter** | Écran couleur, LED, haut-parleur, dashboard en direct |
 | **Enregistrer** | Chaque changement d'état est écrit dans un **journal chaîné par hash SHA-256** |
 | **Prouver** | Une séquence caméra (10 s avant / 10 s après chaque alerte) avec l'empreinte de chaque image |
@@ -127,6 +128,18 @@ Le premier prototype utilisait un **ESP8266** (NodeMCU) sur breadboard. Tous les
 | Intérieur | Cloison qui sépare le Pi (chaud) des capteurs, avec un passage de câbles de 40 × 22 mm ; 4 plots M2,5 pour le Pi ; aération sous le Pi |
 | Couvercle | Grille pour un ventilateur de 40 mm au-dessus du Pi, fentes d'aération, nom gravé |
 
+### Où va quoi
+
+![Placement des composants dans le boîtier](img/boitier_placement.png)
+
+| Emplacement | Composant | Port GrovePi+ |
+|---|---|---|
+| Façade | Écran LCD RGB · PIR · ultrasons · LED | I2C · A2 · D4 · D8 |
+| Côté droit (de l'avant vers l'arrière) | DHT11 · haut-parleur · MQ-2 | D7 · D3 · A0 (fils Dupont) |
+| Arrière | Capteur de son | A1 |
+| Arrière gauche | Raspberry Pi 4 + GrovePi+ | — |
+| Couvercle | Webcam USB (câble par la fenêtre gauche) | USB |
+
 **Fichiers** (dossier `boitier/`) :
 
 - `sentinel_v2_base.stl` et `sentinel_v2_couvercle.stl` : prêts à imprimer, compatibles Tinkercad (import en mm, échelle 100 %) ;
@@ -139,7 +152,7 @@ Le premier prototype utilisait un **ESP8266** (NodeMCU) sur breadboard. Tous les
 
 ## 5. Script capteurs (Raspberry Pi)
 
-Fichier : `capteurs/sentinel_pi.py`. Il est lancé au démarrage par le service systemd `sentinel.service`.
+Fichier : `capteurs/sentinel_pi.py`. Il est lancé au démarrage par le service systemd `sentinel.service`. **On ne le lance jamais à la main en plus du service** : un verrou l'en empêche (voir « Robustesse » plus bas).
 
 ### Boucle principale (1 fois par seconde)
 
@@ -153,9 +166,12 @@ Fichier : `capteurs/sentinel_pi.py`. Il est lancé au démarrage par le service 
 | Distance < 30 cm | alerte `intrusion` |
 | Gaz > référence + 100 | alerte `gaz` |
 | Son > 600 | alerte `bruit` |
-| **PIR + distance < 100 cm** | alerte `presence` (**levée de doute**) |
-| PIR seul, distance < 100 cm, valeurs proches des seuils | **vigilance** |
-| Lecture DHT impossible | état `dht` (capteur en erreur) |
+| Mouvement PIR, distance < 100 cm, valeurs proches des seuils | **vigilance** (pas d'alarme) |
+
+**Levée de doute** : le PIR seul ne déclenche **jamais** l'alarme (un chat, un courant d'air chaud ou quelqu'un qui passe au loin suffisent à l'activer). Il met le système en vigilance, et c'est la **distance mesurée** par les ultrasons qui décide de l'alerte.
+| Aucune lecture DHT valide depuis 30 s | état `dht` (capteur en erreur) |
+
+Une **alerte passe toujours avant** une panne du DHT : même si le DHT est en erreur, une intrusion déclenche bien l'alarme, la caméra et le journal.
 
 3. **Sorties locales** :
 
@@ -163,11 +179,26 @@ Fichier : `capteurs/sentinel_pi.py`. Il est lancé au démarrage par le service 
 |---|---|---|
 | OK | vert, « 24C 51% / Tout est OK » | éteints |
 | Vigilance | orange | éteints |
-| Alerte | rouge, « ALERTE intrusion » | clignotent / bipent |
+| Alerte | rouge, « ALERTE intrusion » | **sirène** : bip-bip rapide (0,25 s) + LED |
+| Fin d'alerte (5 s) | rouge, « Fin d'alarme... » | la sirène finit ses 5 s puis s'arrête |
 | DHT en erreur | violet, « Verifier DHT » | — |
 
 4. **Publication MQTT** de la mesure (1 par seconde).
 5. **Journal** : à chaque **changement d'état**, un événement chaîné est ajouté au fichier local puis publié.
+
+### Alarme continue
+
+La sirène tourne dans un **thread** séparé, pour ne pas bloquer la lecture des capteurs. Chaque seconde où une alerte est détectée, elle est relancée pour `DUREE_ALARME` = 5 s. Résultat : elle sonne **au moins 5 s**, **tant que l'incident dure**, puis s'arrête 5 s après la dernière alerte. Un verrou I2C empêche la sirène et les capteurs de parler au GrovePi+ en même temps.
+
+### Robustesse
+
+| Problème possible | Protection |
+|---|---|
+| Deux copies du script (service + lancement manuel) qui se battent pour le GrovePi+ | **verrou** `fcntl` sur `capteurs/.sentinel.lock` : la 2e copie s'arrête avec « Sentinel-X tourne déjà » |
+| Coupure de courant pendant l'écriture du journal | chaque événement est écrit avec `fsync` ; au redémarrage, une ligne abîmée est **ignorée** au lieu de faire planter le script |
+| Lecture ratée du GrovePi+ (valeur 65535) | lecture refaite jusqu'à 3 fois, puis valeur marquée invalide (-1) : **pas de fausse alerte** |
+| Le DHT11 rate environ une lecture sur deux | la dernière bonne valeur est gardée `DHT_TOLERANCE` = 30 s avant de signaler une erreur |
+| Référence gaz pas encore valide (MQ-2 froid) | pas d'alerte gaz tant que la référence vaut 0 |
 
 ### Référence gaz adaptative
 
@@ -175,7 +206,7 @@ Le MQ-2 dérive avec sa température. La référence est mesurée au démarrage,
 
 ### Configuration
 
-Tout se règle en haut du fichier : `AVEC_xxx = True/False` pour activer chaque capteur, `PORT_xxx` pour les ports, `SEUIL_xxx` pour les seuils, et les variables d'environnement `MQTT_HOST`, `MQTT_USER`, `MQTT_PASS`.
+Tout se règle en haut du fichier : `AVEC_xxx = True/False` pour activer chaque capteur, `PORT_xxx` pour les ports, `SEUIL_xxx` pour les seuils, `DUREE_ALARME` et `DHT_TOLERANCE`. Les identifiants MQTT (`MQTT_CAPTEURS_USER` / `MQTT_CAPTEURS_PASS`) sont lus dans le fichier `.env` à la racine du projet (voir section 14).
 
 ### Simulateur
 
@@ -195,6 +226,13 @@ Exemple de mesure :
 {"ts": 1791363557732, "temp": 22.4, "hum": 46, "dist": 181, "gaz": 303, "ref_gaz": 300,
  "son": 122, "pir": false, "alertes": [], "etat": "ok"}
 ```
+
+**Comptes et droits** (fichier `mosquitto/acl`, connexion anonyme interdite) :
+
+| Compte | Utilisé par | Droits |
+|---|---|---|
+| `capteurs` | `sentinel_pi.py` | **écriture seule** sur `sentinel/capteurs` et `sentinel/evenements` |
+| `api` | API FastAPI | **lecture seule** sur `sentinel/#` |
 
 ---
 
@@ -217,7 +255,7 @@ Fichiers : `api/main.py`, `api/chaine.py`, `api/camera.py`. Elle tourne dans Doc
 |---|---|
 | `GET /api/live` | dernière mesure |
 | `GET /api/incidents` | liste des incidents. Un incident va de la 1re alerte jusqu'au retour à un état sans alerte. |
-| `GET /api/incidents/{id}/replay` | tout pour rejouer : mesures de 30 s avant à 30 s après, événements, images |
+| `GET /api/incidents/{id}/replay` | tout pour rejouer : mesures de 30 s avant à 30 s après (incident de 30 min max), événements, images |
 | `GET /api/evenements` | journal complet |
 | `GET /api/integrite` | recalcule toute la chaîne : `{ok, total, premier_invalide}` |
 | `GET /api/camera` | image actuelle de la webcam |
@@ -255,7 +293,7 @@ Fichier : `api/camera.py` (ffmpeg dans le conteneur API, webcam passée avec `de
 
 - **Capture continue** : ffmpeg garde la webcam ouverte (MJPEG 1280×720, 10 images/s, sans ré-encodage) et réécrit la dernière image en continu. Si ffmpeg s'arrête, il est relancé automatiquement, avec un mode de secours en 640×480.
 - **Flux en direct** : `/api/camera/stream` envoie un flux MJPEG que le navigateur affiche comme une vidéo.
-- **Séquence d'incident** : les 10 dernières secondes sont gardées en mémoire, à 1 image/s. À chaque alerte, ces **10 s « avant »** sont enregistrées, puis **10 s « après »** (prolongées si l'alerte continue). Chaque image a son empreinte SHA-256. Environ 3 Mo par incident, supprimés au bout de 7 jours.
+- **Séquence d'incident** : les 10 dernières secondes sont gardées en mémoire, à 1 image/s. À la première alerte, ces **10 s « avant »** sont enregistrées ; ensuite l'API relance l'enregistrement à **chaque mesure qui contient une alerte**. On obtient donc **1 image/s pendant tout l'incident**, même long, puis **10 s « après »** la dernière seconde d'alerte. Chaque image a son empreinte SHA-256. Environ 150 Ko par image, supprimées au bout de 7 jours.
 - **Photo d'alerte** : une copie instantanée de l'image du moment, liée à l'événement.
 
 ---
@@ -267,7 +305,7 @@ Dossier `dashboard/` (React + Vite + Recharts). Il est servi par nginx sur le Pi
 | Page | Contenu |
 |---|---|
 | **Live** | bandeau d'état coloré, 6 cartes capteurs avec mini-courbes, webcam en direct, derniers incidents |
-| **Timeline** | liste des incidents, lecteur (lecture/pause, vitesse ×1 à ×10, curseur), 4 courbes synchronisées, **caméra de l'incident image par image**, événements du journal qui s'allument au fil de la lecture |
+| **Timeline** | liste des incidents, lecteur (lecture/pause, vitesse ×1 à ×10, curseur), 4 courbes synchronisées, **caméra de l'incident image par image** (rangée de vignettes qui défile, la page garde sa largeur même pour un long incident), événements du journal qui s'allument au fil de la lecture |
 | **Journal** | tous les événements avec `prev` / `hash`, vérification d'intégrité, ligne cassée surlignée en rouge |
 
 Un badge « Journal intègre ✔ / falsifié ✘ » est vérifié toutes les 5 s sur toutes les pages.
@@ -292,7 +330,8 @@ Le dashboard est responsive : il est utilisable sur téléphone.
 ### Git et GitHub
 
 - Dépôt : `bsandoz79/Projet-Sentinel-X`.
-- **Une branche par fonctionnalité** (`feature/webcam`, `fix/webcam-fluide`, `feature/sequence-incident`…), puis une **Pull Request** vers `main` et un merge seulement quand la CI est verte.
+- **Une branche par fonctionnalité** (`feature/webcam`, `fix/webcam-fluide`, `feature/sequence-incident`, `feature/alarme-continue`, `fix/capteurs-robustes`, `feature/mqtt-securise`…), puis une **Pull Request** vers `main` et un merge seulement quand la CI est verte.
+- **Chaque `feat` ou `fix` met aussi à jour cette documentation** (section 18).
 - Messages de commit au format *conventional commits* (`feat(camera): …`, `fix(webcam): …`).
 - Le Pi ne fait que des `git pull` : il ne commite jamais.
 
@@ -308,7 +347,7 @@ Le dashboard est responsive : il est utilisable sur téléphone.
 
 | Service | Image | Port |
 |---|---|---|
-| `mosquitto` | `eclipse-mosquitto:2` (profil `mqtt`, si pas déjà installé) | 1883 |
+| `mosquitto` | `eclipse-mosquitto:2`, conteneur `mosquitto`, authentification + ACL (`mosquitto/secrets`, généré par `securiser_mqtt.sh`) | 1883 |
 | `api` | build `./api` (Python 3.12 + ffmpeg) | 8000 (réseau hôte) |
 | `dashboard` | build `./dashboard` (Node → nginx), ou nginx + fichiers déjà construits | 8080 |
 
@@ -334,7 +373,8 @@ curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER
 git clone https://github.com/bsandoz79/Projet-Sentinel-X.git
 cd Projet-Sentinel-X
 
-# Serveur (Mosquitto déjà présent ?  sinon : --profile mqtt)
+# Serveur : MQTT sécurisé (crée .env + mots de passe), puis l'API
+bash securiser_mqtt.sh
 nohup docker compose up -d --build api > build.log 2>&1 &
 
 # Script capteurs en service
@@ -362,10 +402,15 @@ docker run -d --name dashboard --restart unless-stopped -p 8080:80 \
 ### Mise à jour
 
 ```bash
-cd ~/Projet-Sentinel-X && git pull
+cd ~/Projet-Sentinel-X
+sudo systemctl stop sentinel
+git checkout . && git pull            # efface les essais faits à la main sur le Pi
 nohup docker compose up -d --build api > build.log 2>&1 &
-sudo systemctl restart sentinel
+sudo systemctl start sentinel
+journalctl -u sentinel -f             # « MQTT : connecté en tant que capteurs »
 ```
+
+> ⚠️ Ne pas lancer `python3 sentinel_pi.py` à la main pendant que le service tourne : le verrou refusera, et c'est voulu. Pour relancer : `sudo systemctl restart sentinel`. Pour couper l'alarme : `sudo systemctl stop sentinel`.
 
 ### Adresses utiles
 
@@ -376,6 +421,7 @@ sudo systemctl restart sentinel
 | Santé | `http://IP-du-Pi:8000/api/sante` |
 | Logs du script | `journalctl -u sentinel -f` |
 | Logs de l'API | `docker logs projet-sentinel-x-api-1 --tail 50` |
+| Connexions MQTT refusées | `docker logs mosquitto \| grep "not authorised"` |
 
 ---
 
@@ -388,10 +434,13 @@ sudo systemctl restart sentinel
 | DHT11 | souffle sur le capteur | 51 % → 95 %, 24 → 27 °C, **alerte humidité** ✅ |
 | Ultrasons | main à 16 cm | **alerte intrusion** ✅ |
 | PIR | mouvement devant | **vigilance** ✅ |
-| PIR + ultrasons | approche | **alerte présence** (levée de doute) ✅ |
+| PIR + ultrasons | mouvement au loin, puis approche à moins de 30 cm | vigilance, puis **alerte intrusion** seulement à 30 cm ✅ |
 | MQ-2 | après chauffe | référence ≈ 360, stable ✅ |
 | Son | bruit / silence | 0 → 240 ✅ |
 | Écran, LED, haut-parleur | pendant une alerte | rouge, clignote, bipe ✅ |
+| Alarme continue | main devant l'ultrason ~15 s | sonne tout du long, puis 5 s « Fin d'alarme » ✅ |
+| Alerte malgré DHT en panne | DHT en erreur + main à 1 cm | alerte intrusion journalisée ✅ |
+| Tolérance DHT | DHT qui rate 1 lecture / 2 | température affichée en continu ✅ |
 | Webcam | flux + séquence d'incident | vidéo fluide, ~20 images par incident ✅ |
 | Chaîne complète | capteurs → MQTT → API → dashboard | incident visible et rejouable ✅ |
 
@@ -399,11 +448,21 @@ sudo systemctl restart sentinel
 
 - `api/test_chaine.py` (pytest, lancés par la CI) : intégrité, modification, suppression, recalcul frauduleux, compatibilité du calcul avec le script du Pi.
 - Tests de bout en bout réalisés pendant le développement : simulateur → Mosquitto → API → dashboard, falsification en base détectée, séquence caméra avec une fausse webcam.
+- Test du verrou : une 2e copie du script est refusée, une nouvelle copie repart après l'arrêt de la 1re.
+- Test de la sécurité MQTT (Mosquitto 2 avec la configuration du projet) :
+
+| Essai | Résultat attendu | Obtenu |
+|---|---|---|
+| Connexion anonyme | refusée | « Not authorized » ✅ |
+| `capteurs` avec un mauvais mot de passe | refusée | « Not authorized » ✅ |
+| `capteurs` publie une mesure | reçue par l'API | ✅ |
+| `api` publie un faux événement | bloqué par l'ACL | non reçu ✅ |
+| `capteurs` publie hors de `sentinel/` | bloqué par l'ACL | non reçu ✅ |
 
 ### Scénario de démo (3 minutes)
 
 1. Le boîtier est au vert : le dashboard Live est projeté.
-2. Quelqu'un s'approche : orange, puis **rouge** avec l'alarme ; l'incident apparaît.
+2. Quelqu'un s'approche : orange, puis **rouge** avec l'alarme qui sonne tant qu'il reste ; l'incident apparaît.
 3. **Timeline** : on rejoue l'incident, les courbes et les images de la caméra défilent ensemble.
 4. **Journal** : on montre « Journal intègre », puis une falsification détectée.
 5. Conclusion : limites et suite du projet.
@@ -420,14 +479,17 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 - journal chaîné SHA-256, avec vérification automatique et visible ;
 - empreinte SHA-256 de chaque image ;
 - conteneurs isolés, redémarrage automatique, données dans des volumes Docker ;
-- secrets passés par variables d'environnement (`MQTT_USER` / `MQTT_PASS`), jamais dans le code ;
-- fichier `.env` exclu du dépôt (`.gitignore`).
+- **MQTT authentifié** : `allow_anonymous false`, un compte par programme, mots de passe aléatoires stockés **hachés** par Mosquitto ;
+- **moindre privilège (ACL)** : `capteurs` ne peut qu'écrire, `api` ne peut que lire ; un compte volé ne permet pas d'injecter de faux événements depuis l'API ;
+- secrets dans `.env` (droits 600), **jamais versionné** (`.gitignore`) ; modèle sans secret : `.env.example` ;
+- une seule commande pour tout mettre en place : `bash securiser_mqtt.sh` ;
+- connexions refusées tracées dans les logs de Mosquitto.
 
 **À activer ou à améliorer :**
 
 | Risque | Mesure |
 |---|---|
-| N'importe qui sur le Wi-Fi peut publier en MQTT | `allow_anonymous false` + `mosquitto_passwd`, puis TLS (port 8883) |
+| Mots de passe MQTT lisibles sur le réseau (pas de chiffrement) | TLS sur MQTT (port 8883) avec certificat |
 | Dashboard et API sans authentification | page de connexion + jeton (JWT) sur l'API, HTTPS via un reverse proxy |
 | Suppression de la fin du journal | copier régulièrement le dernier hash vers une autre machine, ou le signer avec horodatage |
 | Accès physique au Pi | boîtier fermé, carte SD chiffrée, sauvegardes |
@@ -448,6 +510,12 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 | Pi qui ne répond plus pendant le build | `npm install` trop lourd pour 2 Go de RAM | dashboard construit sur le PC, le Pi ne sert que les fichiers |
 | Build interrompu à la coupure SSH | processus lié au terminal | `nohup … &` |
 | Erreur 403 sur le dashboard | permissions des fichiers copiés depuis Windows | `chmod -R a+rX` |
+| Capteurs à 65535 / -1, « DHT erreur », SSH qui coupe, compte à rebours de l'écran décalé | **le script tournait deux fois** : le service systemd + une copie lancée à la main, qui interrogeaient le GrovePi+ en même temps | une seule copie (le service) + **verrou** dans le script |
+| Script qui plante au démarrage (`UnicodeDecodeError`) | journal abîmé (octets nuls) après une coupure de courant | lignes abîmées ignorées + écriture avec `fsync` |
+| Alarme muette pendant une intrusion | l'état « DHT en erreur » passait avant l'alerte | priorité donnée aux alertes |
+| Alarme trop courte (3 bips) qui bloquait les mesures | bips joués dans la boucle principale | sirène dans un thread, relancée tant que l'alerte dure |
+| Images de l'incident arrêtées au bout de 10 s | enregistrement déclenché seulement par un changement d'état | relance à chaque mesure en alerte |
+| Timeline qui sortait de l'écran | rangée de vignettes trop large dans une grille CSS | colonnes en `minmax(0, 1fr)` + défilement des vignettes |
 
 ---
 
@@ -459,11 +527,12 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 - la suppression de la **fin** du journal n'est pas détectable sans copie externe ;
 - le DHT11 est peu précis (±2 °C, ±5 %) ;
 - le MQ-2 n'est pas étalonné en ppm : il détecte une variation, pas une concentration ;
-- pas d'authentification sur le dashboard et l'API pour l'instant.
+- pas d'authentification sur le dashboard et l'API pour l'instant ;
+- MQTT authentifié mais pas encore chiffré (TLS).
 
 **Améliorations prévues :**
 
-1. Sécurité : mot de passe et TLS sur MQTT, connexion sur le dashboard, HTTPS.
+1. Sécurité : TLS sur MQTT, connexion sur le dashboard, HTTPS, journal signé (HMAC) pour qu'il soit impossible de recalculer la chaîne sans la clé.
 2. Ancrage du journal : envoi périodique du dernier hash vers un serveur distant, ou signature horodatée (RFC 3161).
 3. Détection de personnes par IA (YOLO) sur les images de la caméra, comme 3e niveau de levée de doute.
 4. Notifications : e-mail ou SMS à chaque alerte.
@@ -491,7 +560,11 @@ Projet-Sentinel-X/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── dashboard/                # React (Vite) : Live, Timeline, Journal
-├── mosquitto/mosquitto.conf
+├── mosquitto/
+│   ├── mosquitto.conf        # broker : anonyme interdit, logs
+│   └── acl                   # droits par compte
+├── securiser_mqtt.sh         # crée .env + mots de passe MQTT, redémarre les services
+├── .env.example              # modèle (le vrai .env n'est jamais versionné)
 ├── docker-compose.yml
 ├── .github/workflows/ci.yml  # CI GitHub Actions
 └── docs/                     # cette documentation + schémas + boîtier
@@ -501,12 +574,33 @@ Projet-Sentinel-X/
 
 | Besoin | Commande |
 |---|---|
-| Voir les messages MQTT | `mosquitto_sub -h localhost -t 'sentinel/#' -v` (à installer : `mosquitto-clients`) |
+| Voir les messages MQTT | `set -a; . ./.env; set +a` puis `mosquitto_sub -h localhost -u api -P "$MQTT_API_PASS" -t 'sentinel/#' -v` |
 | État des conteneurs | `docker ps` |
 | Relancer l'API | `docker restart projet-sentinel-x-api-1` |
 | État du script capteurs | `systemctl status sentinel` |
+| Relancer / arrêter le script | `sudo systemctl restart sentinel` / `sudo systemctl stop sentinel` |
 | Bus I2C | `i2cdetect -y 1` (écran : 3e et 62) |
 | Webcam détectée | `ls /dev/video*` |
 | Adresse IP du Pi | `hostname -I` |
-| Lancer le simulateur | `nohup python3 capteurs/simulateur.py > simu.log 2>&1 &` |
+| Lancer le simulateur | `nohup python3 capteurs/simulateur.py --user capteurs --password <MQTT_CAPTEURS_PASS> > simu.log 2>&1 &` |
 | Arrêter le simulateur | `pkill -f simulateur.py` |
+
+---
+
+## 18. Journal des modifications
+
+Chaque `feat` ou `fix` mergé dans `main` est ajouté ici.
+
+| Date | Type | Branche / PR | Changement |
+|---|---|---|---|
+| 06/10 | feat | `main` | capteurs sur GrovePi+, MQTT, API FastAPI + SQLite, dashboard React, journal chaîné SHA-256 |
+| 07/10 | feat | `feature/webcam` | photo à chaque alerte, webcam en direct sur le dashboard |
+| 07/10 | fix | `fix/webcam-fluide` | capture continue ffmpeg + flux MJPEG (webcam fluide) |
+| 07/10 | feat | `feature/sequence-incident` (PR #3) | séquence caméra 10 s avant / 10 s après, synchronisée dans la Timeline |
+| 07/10 | docs | `docs/documentation` (PR #4) | documentation complète, schémas, boîtier |
+| 07/10 | feat | `feature/alarme-continue` (PR #5) | alarme continue (5 s, relancée tant que l'alerte dure) + 1 image/s sur tout l'incident |
+| 07/10 | fix | `feature/alarme-continue` (PR #6) | Timeline qui débordait de l'écran avec beaucoup de vignettes |
+| 08/10 | fix | `fix/capteurs-robustes` | journal tolérant aux coupures, lectures 65535 ignorées (3 essais), alerte prioritaire sur la panne DHT, tolérance DHT 30 s, verrou « une seule copie du script » |
+| 08/10 | feat | `feature/mqtt-securise` | MQTT authentifié, un compte par programme, ACL (moindre privilège), secrets dans `.env`, script `securiser_mqtt.sh` |
+| 08/10 | docs | `feature/mqtt-securise` | schéma « où va quoi » dans le boîtier (section 4) |
+| 08/10 | fix | `fix/pir-vigilance` | le PIR ne déclenche plus l'alarme : mouvement = vigilance, l'alarme dépend de la distance (< 30 cm) |

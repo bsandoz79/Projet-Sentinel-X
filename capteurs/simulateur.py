@@ -38,7 +38,6 @@ while True:
     elif 0 <= dt < 25: m["dist"] = 22 + random.randint(-2, 2)
     al = []
     if 0 < m["dist"] < 30: al.append("intrusion")
-    if m["pir"] and 0 < m["dist"] < 100: al.append("presence")
     m["alertes"] = al
     m["etat"] = "alerte" if al else ("vigilance" if m["pir"] or m["dist"] < 100 else "ok")
     c.publish("sentinel/capteurs", json.dumps(m))

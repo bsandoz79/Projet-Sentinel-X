@@ -170,7 +170,7 @@ def lcd_init():
             bus.write_byte_data(0x62, 0x08, 0xAA)
         elif LCD_RGB == 0x30:
             bus.write_byte_data(0x30, 0x00, 0x07); time.sleep(0.01)
-            bus.write_byte_data(0x30, 0x04, 0x15)
+            bus.write_byte_data(0x30, 0x01, 0x00); time.sleep(0.1)
         lcd_cmd(0x28); lcd_cmd(0x0C); lcd_cmd(0x01); time.sleep(0.05)
     except OSError:
         print("Ecran LCD non trouve (verifie la prise I2C)")
@@ -381,9 +381,8 @@ try:
         if AVEC_US  and 0 < dist < DIST_ALERTE:             alertes.append("intrusion")
         if AVEC_GAZ and ref_gaz > 0 and gaz > ref_gaz + ECART_GAZ_ALERTE: alertes.append("gaz")
         if AVEC_SON and son > SEUIL_SON:                     alertes.append("bruit")
-        # Levée de doute : mouvement + approche = alerte
-        if AVEC_PIR and AVEC_US and presence and 0 < dist < DIST_VIGILANCE: alertes.append("presence")
-        if AVEC_PIR and not AVEC_US and presence:                         alertes.append("mouvement")
+        # Le PIR seul ne déclenche JAMAIS l'alarme : un mouvement = vigilance (plus bas).
+        # L'alarme se décide sur la DISTANCE (intrusion < DIST_ALERTE), qui confirme qu'on s'approche.
 
         if not alertes:
             if presence: vigilance = True
