@@ -4,7 +4,20 @@
 #  Tous les capteurs sur le GrovePi+ (plus d'ESP)
 #  Lancer :  python3 sentinel_pi.py      (Ctrl+C pour arrêter)
 # =====================================================
-import time, json, hashlib, struct, math, os, threading
+import time, json, hashlib, struct, math, os, threading, fcntl, sys
+
+# ---------- VERROU : une seule copie du script à la fois ----------
+# Deux copies qui parlent au GrovePi+ en même temps = lectures fausses (-1, 65535, DHT erreur).
+VERROU = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".sentinel.lock")
+_verrou_fichier = open(VERROU, "w")
+try:
+    fcntl.flock(_verrou_fichier, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("Sentinel-X tourne déjà (service systemd ?).")
+    print("  Voir les logs : journalctl -u sentinel -f")
+    print("  Redémarrer    : sudo systemctl restart sentinel")
+    sys.exit(1)
+_verrou_fichier.write(str(os.getpid())); _verrou_fichier.flush()
 
 try:
     from smbus2 import SMBus
@@ -95,11 +108,15 @@ def analog_write(pin, v):
 
 def analog_read(pin):
     def f():
-        gp_cmd(3, pin); time.sleep(0.05)
+        gp_cmd(3, pin); time.sleep(0.1)
         r = gp_lire(3)
         return r[1] * 256 + r[2]
-    v = essai(f, -1)
-    return v if 0 <= v <= 1023 else -1      # 65535 = le GrovePi+ ne répond plus : lecture invalide
+    for _ in range(3):                      # 65535 = GrovePi+ pas prêt : on réessaie
+        v = essai(f, -1)
+        if 0 <= v <= 1023:
+            return v
+        time.sleep(0.05)
+    return -1
 
 def ultrason(pin):
     def f():

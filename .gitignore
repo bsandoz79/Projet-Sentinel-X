@@ -6,3 +6,4 @@ __pycache__/
 *.db
 capteurs/journal_sentinel.jsonl
 *.log
+.sentinel.lock
