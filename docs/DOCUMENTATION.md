@@ -527,6 +527,7 @@ Plan B : une vidéo de la démo est enregistrée à l'avance, et le simulateur p
 | Build interrompu à la coupure SSH | processus lié au terminal | `nohup … &` |
 | Erreur 403 sur le dashboard | permissions des fichiers copiés depuis Windows | `chmod -R a+rX` |
 | Capteurs à 65535 / -1, « DHT erreur », SSH qui coupe, compte à rebours de l'écran décalé | **le script tournait deux fois** : le service systemd + une copie lancée à la main, qui interrogeaient le GrovePi+ en même temps | une seule copie (le service) + **verrou** dans le script |
+| Journal « falsifié » en permanence après ces essais | les deux copies du script écrivaient chacune leur propre suite de la chaîne : deux événements avec le **même** `prev` (chaîne en « Y ») | c'est la vérification qui fait son travail ; journal archivé puis remis à zéro (procédure ci-dessous), et le verrou empêche que ça se reproduise |
 | Script qui plante au démarrage (`UnicodeDecodeError`) | journal abîmé (octets nuls) après une coupure de courant | lignes abîmées ignorées + écriture avec `fsync` |
 | Alarme muette pendant une intrusion | l'état « DHT en erreur » passait avant l'alerte | priorité donnée aux alertes |
 | Alarme trop courte (3 bips) qui bloquait les mesures | bips joués dans la boucle principale | sirène dans un thread, relancée tant que l'alerte dure |
@@ -588,6 +589,18 @@ Projet-Sentinel-X/
 └── docs/                     # cette documentation + schémas + boîtier
 ```
 
+### Remettre le journal à zéro (avant une démo)
+
+À faire seulement si la chaîne est cassée pour une raison connue (essais, double lancement). L'ancien journal est **archivé**, pas effacé.
+
+```bash
+cd ~/Projet-Sentinel-X
+sudo systemctl stop sentinel
+mv capteurs/journal_sentinel.jsonl capteurs/journal_archive_$(date +%Y%m%d_%H%M).jsonl
+docker compose exec api python -c "import sqlite3; db=sqlite3.connect('/data/sentinel.db'); db.execute('DELETE FROM evenements'); db.execute('DELETE FROM photos'); db.commit(); print('journal vidé')"
+sudo systemctl start sentinel
+```
+
 ### Commandes utiles
 
 | Besoin | Commande |
@@ -624,3 +637,4 @@ Chaque `feat` ou `fix` mergé dans `main` est ajouté ici.
 | 08/10 | fix | `fix/pir-vigilance` | le PIR ne déclenche plus l'alarme : mouvement = vigilance, l'alarme dépend de la distance (< 30 cm) |
 | 08/10 | feat | `feature/dashboard-securise` | dashboard protégé par mot de passe (nginx), API fermée au réseau (127.0.0.1), relais `/api`, en-têtes de sécurité, script `securiser_dashboard.sh` |
 | 08/10 | feat | `feature/alarme-visuelle` | écran qui clignote en rouge au rythme de la sirène pendant l'alarme |
+| 08/10 | docs | `docs/journal-reset` | explication du journal « falsifié » après le double lancement + procédure d'archivage / remise à zéro |
