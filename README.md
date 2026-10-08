@@ -63,6 +63,7 @@ cd api && pytest -q                                  # 5 tests
   - génère `mosquitto/secrets/passwd` (mots de passe **hachés**) et applique `mosquitto/acl` ;
   - redémarre Mosquitto, l'API et le service capteurs.
 - **Moindre privilège (ACL)** : le compte `capteurs` peut seulement **écrire** `sentinel/capteurs` et `sentinel/evenements`, le compte `api` peut seulement **lire** `sentinel/#`. Un compte volé ne permet pas d'injecter de faux événements depuis l'API.
+- **Dashboard protégé** : `bash securiser_dashboard.sh` sur le Pi → identifiant + mot de passe (dans `.env`) demandés pour les pages, l'API et la caméra. L'API n'écoute plus que sur le Pi (127.0.0.1) : tout passe par `http://IP-du-Pi:8080`. Dashboard construit avec `VITE_API_URL=/`.
 - Connexions refusées visibles : `docker logs mosquitto | grep "not authorised"`.
 - Simulateur avec le broker sécurisé : `python3 capteurs/simulateur.py --host <ip> --user capteurs --password <MQTT_CAPTEURS_PASS>`.
 - Limite connue du hash chaîné : il détecte une **modification** ou une **suppression au milieu**, mais pas la suppression des **derniers** événements → amélioration : copie du dernier hash ailleurs (autre machine, signature horodatée).
