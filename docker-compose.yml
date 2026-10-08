@@ -1,14 +1,15 @@
 # SENTINEL-X : docker compose up -d --build
-# Si Mosquitto tourne DÉJÀ sur le Pi (port 1883) : ne rien changer.
-# Si Mosquitto n'est PAS installé : docker compose --profile mqtt up -d --build
+# 1re fois (ou pour changer les mots de passe MQTT) : ./securiser_mqtt.sh
+# Les mots de passe sont dans .env (jamais versionné), voir .env.example
 services:
   mosquitto:
     image: eclipse-mosquitto:2
-    profiles: ["mqtt"]
+    container_name: mosquitto
     restart: unless-stopped
     ports: ["1883:1883"]
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/secrets:/mosquitto/secrets:ro     # passwd + acl générés par securiser_mqtt.sh
       - mosquitto-data:/mosquitto/data
 
   api:
@@ -18,8 +19,8 @@ services:
     environment:
       MQTT_HOST: localhost
       MQTT_PORT: 1883
-      MQTT_USER: ${MQTT_USER:-}
-      MQTT_PASS: ${MQTT_PASS:-}
+      MQTT_USER: ${MQTT_API_USER:-}           # compte « api » : lecture seule (voir mosquitto/acl)
+      MQTT_PASS: ${MQTT_API_PASS:-}
     devices:
       - /dev/video0:/dev/video0   # webcam USB (enlever ces 2 lignes si pas de webcam)
     volumes:

@@ -1,0 +1,2 @@
+# scripts shell : toujours en fins de ligne Linux (sinon ils plantent sur le Pi)
+*.sh text eol=lf

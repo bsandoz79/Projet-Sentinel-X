@@ -1,0 +1,9 @@
+# SENTINEL-X · droits par compte (principe du moindre privilège)
+# Le script capteurs ne fait QU'ÉCRIRE les mesures et le journal
+user capteurs
+topic write sentinel/capteurs
+topic write sentinel/evenements
+
+# L'API ne fait QUE LIRE
+user api
+topic read sentinel/#

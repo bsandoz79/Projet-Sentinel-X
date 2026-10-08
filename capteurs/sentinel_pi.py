@@ -59,10 +59,22 @@ DUREE_ALARME     = 5      # s : l'alarme sonne au moins 5 s, relancée tant que 
 JOURNAL = "journal_sentinel.jsonl"  # journal chaîné (hash) des événements
 
 # ---------- MQTT (envoi vers le serveur : API + dashboard) ----------
+# Les identifiants viennent du fichier .env à la racine du projet (créé par securiser_mqtt.sh)
+def charger_env():
+    chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(chemin):
+        with open(chemin) as f:
+            for ligne in f:
+                ligne = ligne.strip()
+                if ligne and not ligne.startswith("#") and "=" in ligne:
+                    cle, val = ligne.split("=", 1)
+                    os.environ.setdefault(cle.strip(), val.strip().strip('"').strip("'"))
+charger_env()
+
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USER = os.getenv("MQTT_USER") or None
-MQTT_PASS = os.getenv("MQTT_PASS") or None
+MQTT_USER = os.getenv("MQTT_CAPTEURS_USER") or os.getenv("MQTT_USER") or None
+MQTT_PASS = os.getenv("MQTT_CAPTEURS_PASS") or os.getenv("MQTT_PASS") or None
 
 # =====================================================
 #  GrovePi+ (adresse 0x04) — mini pilote
@@ -281,6 +293,15 @@ if mqtt:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sentinel-capteurs")
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
+    else:
+        print("MQTT : pas d'identifiants (.env absent) -> connexion anonyme, refusée si le broker est sécurisé")
+
+    def on_connect(c, userdata, flags, reason_code, properties=None):
+        if reason_code.is_failure:
+            print("MQTT : connexion REFUSÉE ->", reason_code, "(vérifie .env / securiser_mqtt.sh)")
+        else:
+            print("MQTT : connecté en tant que", MQTT_USER or "anonyme")
+    client.on_connect = on_connect
     client.connect_async(MQTT_HOST, MQTT_PORT)
     client.loop_start()          # reconnexion automatique si le serveur redémarre
 else:
